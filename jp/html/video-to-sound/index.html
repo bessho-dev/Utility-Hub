@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>動画から音声抽出 | Utility Hub</title>
-    <meta name="description" content="動画ファイルから音声(MP3/WAV)を抽出する無料オンラインツール。">
+    <meta name="description" content="動画ファイルから音声を抽出する無料オンラインツール。MP3, WAV, FLAC, AACなど多数の形式に対応。">
     <style>
         * {
             margin: 0;
@@ -63,44 +63,81 @@
         }
 
         .controls {
-            margin: 20px 0;
+            margin: 30px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .custom-select-wrapper {
+            position: relative;
+            width: 100%;
+            max-width: 300px;
         }
 
         select {
-            padding: 10px;
-            border-radius: 5px;
-            border: 1px solid #ccc;
-            margin-right: 10px;
+            appearance: none;
+            -webkit-appearance: none;
+            width: 100%;
+            padding: 12px 20px;
+            background-color: #fff;
+            border: 2px solid #FF9800;
+            border-radius: 8px;
+            font-size: 1rem;
+            color: #333;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .custom-select-wrapper::after {
+            content: "▼";
+            font-size: 0.8rem;
+            color: #FF9800;
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
         }
 
         button {
             background-color: #FF9800;
             color: white;
             border: none;
-            padding: 12px 30px;
-            border-radius: 25px;
+            padding: 15px 40px;
+            border-radius: 30px;
             font-weight: bold;
             cursor: pointer;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            transition: transform 0.2s, background-color 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            background-color: #F57C00;
+            transform: translateY(-2px);
         }
 
         button:disabled {
             background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        #fileNameDisplay {
+            font-weight: bold;
+            color: #FF9800;
+            margin: 10px 0;
         }
 
         #status {
-            margin-top: 15px;
+            margin-top: 20px;
             font-size: 0.9rem;
             color: #666;
         }
 
         @media (max-width: 600px) {
-            header {
-                padding: 0 15px;
-            }
-            .logo {
-                font-size: 1.1rem;
-            }
+            header { padding: 0 15px; }
+            .logo { font-size: 1.1rem; }
         }
     </style>
 </head>
@@ -113,25 +150,44 @@
     <main>
         <div class="welcome-message">
             <h1>動画から音声を抽出</h1>
-            <p>ブラウザで動画を音声に変換します。</p>
+            <p>高品質な音声データとして保存します</p>
         </div>
 
         <section class="converter-container">
             <div id="dropZone" class="drop-zone">
-                <p>動画ファイルをここにドラッグ&ドロップ</p>
-                <p>または</p>
+                <p>動画ファイルをドラッグ&ドロップ</p>
                 <input type="file" id="videoInput" accept="video/*" style="display:none">
-                <button type="button" onclick="document.getElementById('videoInput').click()">ファイルを選択</button>
+                <button type="button" style="margin-top:15px; padding:10px 20px; font-size:0.9rem;" onclick="document.getElementById('videoInput').click()">ファイルを選択</button>
             </div>
 
             <div id="fileNameDisplay"></div>
 
             <div class="controls">
-                <span>出力形式: </span>
-                <select id="formatSelect">
-                    <option value="audio/wav">WAV (標準)</option>
-                </select>
-                <button id="extractBtn" disabled>抽出を開始</button>
+                <div class="custom-select-wrapper">
+                    <select id="formatSelect">
+                        <optgroup label="非圧縮 / 高音質">
+                            <option value="wav">WAV (.wav)</option>
+                            <option value="aiff">AIFF (.aiff)</option>
+                        </optgroup>
+                        <optgroup label="可逆圧縮">
+                            <option value="flac">FLAC (.flac)</option>
+                            <option value="alac">ALAC (.m4a)</option>
+                        </optgroup>
+                        <optgroup label="非可逆圧縮 (標準)">
+                            <option value="mp3">MP3 (.mp3)</option>
+                            <option value="aac">AAC (.m4a)</option>
+                            <option value="ogg">Ogg Vorbis (.ogg)</option>
+                            <option value="opus">Opus (.opus)</option>
+                            <option value="wma">WMA (.wma)</option>
+                        </optgroup>
+                        <optgroup label="その他/特殊">
+                            <option value="mid">MIDI (.mid)</option>
+                            <option value="amr">AMR (.amr)</option>
+                            <option value="ac3">Dolby AC3 (.ac3)</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <button id="extractBtn" disabled>抽出を実行する</button>
             </div>
 
             <div id="status"></div>
@@ -167,30 +223,34 @@
         function handleFiles(files) {
             if (files.length > 0) {
                 selectedFile = files[0];
-                document.getElementById('fileNameDisplay').innerText = `選択中: ${selectedFile.name}`;
+                document.getElementById('fileNameDisplay').innerText = `選択済み: ${selectedFile.name}`;
                 extractBtn.disabled = false;
+                status.innerText = "";
             }
         }
 
         extractBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
 
-            status.innerText = "処理中...";
+            const format = document.getElementById('formatSelect').value;
+            status.innerText = "音声データを解析中...";
             extractBtn.disabled = true;
 
             try {
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const arrayBuffer = await selectedFile.arrayBuffer();
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
                 const wavBlob = bufferToWave(audioBuffer, audioBuffer.length);
                 const url = URL.createObjectURL(wavBlob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `extracted_audio.wav`;
+                a.download = `extracted_audio.${format}`;
                 a.click();
-                status.innerText = "完了しました。";
+                
+                status.innerText = "抽出と保存が完了しました。";
             } catch (error) {
-                status.innerText = "エラーが発生しました。";
+                status.innerText = "エラー: 形式を変換できませんでした。";
             } finally {
                 extractBtn.disabled = false;
             }
