@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>無音自動カットエディター | Utility Hub</title>
+    <meta name="description" content="動画や音声の無音部分を自動で判別し、一括でカット・加工できるツール。手動での微調整も可能です。">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        header {
+            background-color: #FF9800;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .logo {
+            color: white;
+            font-size: 1.25rem;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        main {
+            padding: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .editor-container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            margin-top: 20px;
+        }
+
+        .drop-zone {
+            border: 2px dashed #FF9800;
+            padding: 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        .waveform-wrapper {
+            position: relative;
+            width: 100%;
+            height: 200px;
+            background: #eee;
+            margin: 20px 0;
+            overflow: hidden;
+            border-radius: 4px;
+            cursor: crosshair;
+        }
+
+        canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .threshold-control {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        button {
+            background-color: #FF9800;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 20px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+        }
+
+        .info-text {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        .instruction {
+            background: #FFF3E0;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <a href="#" class="logo">Utility Hub</a>
+    </header>
+
+    <main>
+        <h1>無音自動カット・修正エディター</h1>
+        <p>音量が低い場所を自動で特定し、手動で微調整できます。</p>
+
+        <section class="editor-container">
+            <div id="dropZone" class="drop-zone">
+                <p>動画または音声をドラッグ&ドロップ</p>
+                <input type="file" id="fileInput" accept="video/*,audio/*" style="display:none">
+                <button type="button" onclick="document.getElementById('fileInput').click()" style="margin-top:10px">ファイルを選択</button>
+            </div>
+
+            <div id="editorUI" style="display:none">
+                <div class="instruction">
+                    <strong>操作方法:</strong><br>
+                    ・オレンジの部分が「音が出る範囲」です。<br>
+                    ・波形をマウスでドラッグ（範囲選択）すると、その場所の<b>有音/無音を反転</b>させます。
+                </div>
+
+                <div class="threshold-control">
+                    <label>自動判定しきい値:</label>
+                    <input type="range" id="thresholdRange" min="0" max="0.2" step="0.005" value="0.02">
+                    <button id="reAnalyzeBtn">再解析</button>
+                </div>
+
+                <div class="waveform-wrapper" id="waveformWrapper">
+                    <canvas id="waveformCanvas"></canvas>
+                    <canvas id="overlayCanvas"></canvas>
+                </div>
+
+                <div class="controls">
+                    <button id="playBtn">再生/停止</button>
+                    <button id="exportBtn">加工して保存(WAV)</button>
+                </div>
+                <div id="status" class="info-text"></div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const editorUI = document.getElementById('editorUI');
+        const waveformCanvas = document.getElementById('waveformCanvas');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const thresholdRange = document.getElementById('thresholdRange');
+        const reAnalyzeBtn = document.getElementById('reAnalyzeBtn');
+        const playBtn = document.getElementById('playBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const status = document.getElementById('status');
+
+        let audioCtx, audioBuffer, rawData;
+        let regions = []; 
+        let isPlaying = false;
+        let sourceNode;
+        let startTime = 0;
+        let startOffset = 0;
+
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); });
+        dropZone.addEventListener('drop', (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
+        fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
+
+        async function handleFiles(files) {
+            if (files.length === 0) return;
+            const file = files[0];
+            status.innerText = "読み込み中...";
+            
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const arrayBuffer = await file.arrayBuffer();
+            audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            rawData = audioBuffer.getChannelData(0);
+
+            analyzeSilence();
+            drawWaveform();
+            drawOverlay();
+            
+            editorUI.style.display = 'block';
+            dropZone.style.display = 'none';
+            status.innerText = "解析完了";
+        }
+
+        function analyzeSilence() {
+            const threshold = parseFloat(thresholdRange.value);
+            const step = Math.floor(audioBuffer.sampleRate * 0.1); 
+            regions = [];
+            
+            let isCurrentSound = false;
+            let startIdx = 0;
+
+            for (let i = 0; i < rawData.length; i += 100) {
+                const vol = Math.abs(rawData[i]);
+                if (!isCurrentSound && vol > threshold) {
+                    isCurrentSound = true;
+                    startIdx = i;
+                } else if (isCurrentSound && vol < threshold) {
+                    const silenceCount = 0;
+                    let check = true;
+                    for(let j=i; j<i+step && j<rawData.length; j+=100){
+                        if(Math.abs(rawData[j]) > threshold) { check = false; break; }
+                    }
+                    if(check){
+                        isCurrentSound = false;
+                        regions.push({start: startIdx / rawData.length, end: i / rawData.length});
+                    }
+                }
+            }
+            if (isCurrentSound) regions.push({start: startIdx / rawData.length, end: 1});
+        }
+
+        function drawWaveform() {
+            const ctx = waveformCanvas.getContext('2d');
+            waveformCanvas.width = waveformCanvas.offsetWidth;
+            waveformCanvas.height = waveformCanvas.offsetHeight;
+            
+            ctx.fillStyle = "#ccc";
+            const width = waveformCanvas.width;
+            const height = waveformCanvas.height;
+            const step = Math.ceil(rawData.length / width);
+            const amp = height / 2;
+
+            ctx.beginPath();
+            ctx.moveTo(0, amp);
+            for (let i = 0; i < width; i++) {
+                let min = 1.0, max = -1.0;
+                for (let j = 0; j < step; j++) {
+                    const datum = rawData[(i * step) + j];
+                    if (datum < min) min = datum;
+                    if (datum > max) max = datum;
+                }
+                ctx.lineTo(i, (1 + min) * amp);
+                ctx.lineTo(i, (1 + max) * amp);
+            }
+            ctx.stroke();
+        }
+
+        function drawOverlay() {
+            const ctx = overlayCanvas.getContext('2d');
+            overlayCanvas.width = overlayCanvas.offsetWidth;
+            overlayCanvas.height = overlayCanvas.offsetHeight;
+            const w = overlayCanvas.width;
+            const h = overlayCanvas.height;
+
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = "rgba(255, 152, 0, 0.3)"; 
+            
+            regions.forEach(r => {
+                ctx.fillRect(r.start * w, 0, (r.end - r.start) * w, h);
+            });
+        }
+
+        let isDragging = false;
+        let dragStart = 0;
+
+        overlayCanvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragStart = e.offsetX / overlayCanvas.width;
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            const dragEnd = Math.max(0, Math.min(1, (e.pageX - overlayCanvas.getBoundingClientRect().left) / overlayCanvas.width));
+            toggleRegion(Math.min(dragStart, dragEnd), Math.max(dragStart, dragEnd));
+        });
+
+        function toggleRegion(start, end) {
+            const newRegion = {start, end};
+            let affected = false;
+            
+            for (let i = regions.length - 1; i >= 0; i--) {
+                const r = regions[i];
+                if (start < r.end && end > r.start) {
+                    affected = true;
+                    regions.splice(i, 1);
+                    if (r.start < start) regions.push({start: r.start, end: start});
+                    if (r.end > end) regions.push({start: end, end: r.end});
+                }
+            }
+
+            if (!affected) {
+                regions.push(newRegion);
+                regions.sort((a, b) => a.start - b.start);
+            }
+            drawOverlay();
+        }
+
+        reAnalyzeBtn.addEventListener('click', () => {
+            analyzeSilence();
+            drawOverlay();
+        });
+
+        playBtn.addEventListener('click', () => {
+            if (isPlaying) {
+                sourceNode.stop();
+                isPlaying = false;
+            } else {
+                sourceNode = audioCtx.createBufferSource();
+                const processedBuffer = audioCtx.createBuffer(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+                
+                for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+                    const data = audioBuffer.getChannelData(ch);
+                    const newData = processedBuffer.getChannelData(ch);
+                    newData.set(data);
+                    
+                    const fullMask = new Float32Array(newData.length).fill(0);
+                    regions.forEach(r => {
+                        for(let i = Math.floor(r.start * newData.length); i < Math.floor(r.end * newData.length); i++) {
+                            fullMask[i] = 1;
+                        }
+                    });
+                    for(let i=0; i<newData.length; i++) { if(fullMask[i] === 0) newData[i] = 0; }
+                }
+
+                sourceNode.buffer = processedBuffer;
+                sourceNode.connect(audioCtx.destination);
+                sourceNode.start();
+                isPlaying = true;
+                sourceNode.onended = () => isPlaying = false;
+            }
+        });
+
+        exportBtn.addEventListener('click', () => {
+            const length = audioBuffer.length;
+            const numOfChan = audioBuffer.numberOfChannels;
+            const offlineCtx = new OfflineAudioContext(numOfChan, length, audioBuffer.sampleRate);
+            
+            const source = offlineCtx.createBufferSource();
+            const renderBuffer = audioCtx.createBuffer(numOfChan, length, audioBuffer.sampleRate);
+
+            for (let ch = 0; ch < numOfChan; ch++) {
+                const data = audioBuffer.getChannelData(ch);
+                const newData = renderBuffer.getChannelData(ch);
+                newData.set(data);
+                const fullMask = new Float32Array(newData.length).fill(0);
+                regions.forEach(r => {
+                    for(let i = Math.floor(r.start * newData.length); i < Math.floor(r.end * newData.length); i++) {
+                        fullMask[i] = 1;
+                    }
+                });
+                for(let i=0; i<newData.length; i++) { if(fullMask[i] === 0) newData[i] = 0; }
+            }
+
+            source.buffer = renderBuffer;
+            source.connect(offlineCtx.destination);
+            source.start();
+
+            offlineCtx.startRendering().then(renderedBuffer => {
+                const wavBlob = bufferToWave(renderedBuffer, length);
+                const url = URL.createObjectURL(wavBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = "processed_audio.wav";
+                a.click();
+            });
+        });
+
+        function bufferToWave(abuffer, len) {
+            let numOfChan = abuffer.numberOfChannels,
+                length = len * numOfChan * 2 + 44,
+                buffer = new ArrayBuffer(length),
+                view = new DataView(buffer),
+                channels = [], i, sample, offset = 0, pos = 0;
+
+            function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+            function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+            setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157);
+            setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
+            setUint32(abuffer.sampleRate); setUint32(abuffer.sampleRate * 2 * numOfChan);
+            setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164);
+            setUint32(length - pos - 4);
+
+            for(i = 0; i < numOfChan; i++) channels.push(abuffer.getChannelData(i));
+            while(pos < length) {
+                for(i = 0; i < numOfChan; i++) {
+                    sample = Math.max(-1, Math.min(1, channels[i][offset]));
+                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0;
+                    view.setInt16(pos, sample, true); pos += 2;
+                }
+                offset++;
+            }
+            return new Blob([buffer], {type: "audio/wav"});
+        }
+    </script>
+</body>
+</html>
