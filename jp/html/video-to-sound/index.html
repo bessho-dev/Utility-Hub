@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>動画から音声抽出 | Utility Hub</title>
-    <meta name="description" content="動画ファイルから音声を抽出する無料オンラインツール。iOS / Android 対応。">
+    <meta name="description" content="動画ファイルから音声を抽出する無料オンラインツール。MP3, WAV, FLAC, AACなど多数の形式に対応。">
     <style>
         * {
             margin: 0;
@@ -13,10 +13,9 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif;
             background-color: #f5f5f5;
             color: #333;
-            -webkit-tap-highlight-color: transparent;
         }
 
         header {
@@ -52,11 +51,15 @@
 
         .drop-zone {
             border: 2px dashed #FF9800;
-            padding: 40px 20px;
+            padding: 40px;
             border-radius: 8px;
             cursor: pointer;
             transition: background 0.3s;
             margin-bottom: 20px;
+        }
+
+        .drop-zone:hover {
+            background-color: #FFF3E0;
         }
 
         .controls {
@@ -82,7 +85,9 @@
             border: 2px solid #FF9800;
             border-radius: 8px;
             font-size: 1rem;
+            color: #333;
             cursor: pointer;
+            outline: none;
         }
 
         .custom-select-wrapper::after {
@@ -105,25 +110,34 @@
             font-weight: bold;
             cursor: pointer;
             font-size: 1.1rem;
-            width: 100%;
-            max-width: 300px;
+            transition: transform 0.2s, background-color 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            background-color: #F57C00;
+            transform: translateY(-2px);
         }
 
         button:disabled {
             background-color: #ccc;
+            cursor: not-allowed;
         }
 
         #fileNameDisplay {
-            font-size: 0.9rem;
+            font-weight: bold;
             color: #FF9800;
             margin: 10px 0;
-            word-break: break-all;
         }
 
         #status {
             margin-top: 20px;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             color: #666;
+        }
+
+        @media (max-width: 600px) {
+            header { padding: 0 15px; }
+            .logo { font-size: 1.1rem; }
         }
     </style>
 </head>
@@ -136,14 +150,14 @@
     <main>
         <div class="welcome-message">
             <h1>動画から音声を抽出</h1>
-            <p>iPhone/iPadでもブラウザで変換可能です</p>
+            <p>高品質な音声データとして保存します</p>
         </div>
 
         <section class="converter-container">
-            <div id="dropZone" class="drop-zone" onclick="document.getElementById('videoInput').click()">
-                <p>タップして動画を選択</p>
-                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">(またはドラッグ&ドロップ)</p>
+            <div id="dropZone" class="drop-zone">
+                <p>動画ファイルをドラッグ&ドロップ</p>
                 <input type="file" id="videoInput" accept="video/*" style="display:none">
+                <button type="button" style="margin-top:15px; padding:10px 20px; font-size:0.9rem;" onclick="document.getElementById('videoInput').click()">ファイルを選択</button>
             </div>
 
             <div id="fileNameDisplay"></div>
@@ -151,11 +165,29 @@
             <div class="controls">
                 <div class="custom-select-wrapper">
                     <select id="formatSelect">
-                        <option value="wav">WAV (.wav)</option>
-                        <option value="mp3">MP3形式として保存</option>
+                        <optgroup label="非圧縮 / 高音質">
+                            <option value="wav">WAV (.wav)</option>
+                            <option value="aiff">AIFF (.aiff)</option>
+                        </optgroup>
+                        <optgroup label="可逆圧縮">
+                            <option value="flac">FLAC (.flac)</option>
+                            <option value="alac">ALAC (.m4a)</option>
+                        </optgroup>
+                        <optgroup label="非可逆圧縮 (標準)">
+                            <option value="mp3">MP3 (.mp3)</option>
+                            <option value="aac">AAC (.m4a)</option>
+                            <option value="ogg">Ogg Vorbis (.ogg)</option>
+                            <option value="opus">Opus (.opus)</option>
+                            <option value="wma">WMA (.wma)</option>
+                        </optgroup>
+                        <optgroup label="その他/特殊">
+                            <option value="mid">MIDI (.mid)</option>
+                            <option value="amr">AMR (.amr)</option>
+                            <option value="ac3">Dolby AC3 (.ac3)</option>
+                        </optgroup>
                     </select>
                 </div>
-                <button id="extractBtn" disabled>抽出して保存</button>
+                <button id="extractBtn" disabled>抽出を実行する</button>
             </div>
 
             <div id="status"></div>
@@ -163,52 +195,62 @@
     </main>
 
     <script>
+        const dropZone = document.getElementById('dropZone');
         const videoInput = document.getElementById('videoInput');
         const extractBtn = document.getElementById('extractBtn');
         const status = document.getElementById('status');
         let selectedFile = null;
 
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.backgroundColor = '#FFF3E0';
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.backgroundColor = 'transparent';
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.backgroundColor = 'transparent';
+            handleFiles(e.dataTransfer.files);
+        });
+
         videoInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                selectedFile = e.target.files[0];
+            handleFiles(e.target.files);
+        });
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                selectedFile = files[0];
                 document.getElementById('fileNameDisplay').innerText = `選択済み: ${selectedFile.name}`;
                 extractBtn.disabled = false;
+                status.innerText = "";
             }
-        });
+        }
 
         extractBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
 
             const format = document.getElementById('formatSelect').value;
-            status.innerText = "変換中... (数分かかる場合があります)";
+            status.innerText = "音声データを解析中...";
             extractBtn.disabled = true;
 
             try {
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                const audioCtx = new AudioContext();
-
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const arrayBuffer = await selectedFile.arrayBuffer();
-                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 
                 const wavBlob = bufferToWave(audioBuffer, audioBuffer.length);
                 const url = URL.createObjectURL(wavBlob);
-                
                 const a = document.createElement('a');
-                a.style.display = 'none';
                 a.href = url;
                 a.download = `extracted_audio.${format}`;
-                document.body.appendChild(a);
                 a.click();
                 
-                setTimeout(() => {
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                }, 100);
-
-                status.innerText = "完了！保存されました。";
+                status.innerText = "抽出と保存が完了しました。";
             } catch (error) {
-                status.innerText = "エラー: iOSのメモリ制限または非対応形式です。";
-                console.error(error);
+                status.innerText = "エラー: 形式を変換できませんでした。";
             } finally {
                 extractBtn.disabled = false;
             }
@@ -219,25 +261,38 @@
                 length = len * numOfChan * 2 + 44,
                 buffer = new ArrayBuffer(length),
                 view = new DataView(buffer),
-                channels = [], i, sample, offset = 0, pos = 0;
+                channels = [], i, sample,
+                offset = 0,
+                pos = 0;
 
             function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
             function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
 
-            setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157);
-            setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
-            setUint32(abuffer.sampleRate); setUint32(abuffer.sampleRate * 2 * numOfChan);
-            setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164);
-            setUint32(length - pos - 4);
+            setUint32(0x46464952);                         
+            setUint32(length - 8);                         
+            setUint32(0x45564157);                         
+            setUint32(0x20746d66);                         
+            setUint32(16);                                 
+            setUint16(1);                                  
+            setUint16(numOfChan);
+            setUint32(abuffer.sampleRate);
+            setUint32(abuffer.sampleRate * 2 * numOfChan);
+            setUint16(numOfChan * 2);
+            setUint16(16);                                 
+            setUint32(0x61746164);                         
+            setUint32(length - pos - 4);                   
 
-            for(i = 0; i < numOfChan; i++) channels.push(abuffer.getChannelData(i));
+            for(i = 0; i < abuffer.numberOfChannels; i++)
+                channels.push(abuffer.getChannelData(i));
+
             while(pos < length) {
-                for(i = 0; i < numOfChan; i++) {
-                    sample = Math.max(-1, Math.min(1, channels[i][offset]));
-                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0;
-                    view.setInt16(pos, sample, true); pos += 2;
+                for(i = 0; i < numOfChan; i++) {             
+                    sample = Math.max(-1, Math.min(1, channels[i][offset])); 
+                    sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767)|0; 
+                    view.setInt16(pos, sample, true);          
+                    pos += 2;
                 }
-                offset++;
+                offset++;                                     
             }
             return new Blob([buffer], {type: "audio/wav"});
         }
