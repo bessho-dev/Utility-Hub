@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>静音自动剪辑器 | Utility Hub</title>
+    <meta name="description" content="免费在线视频/音频静音检测与剪辑工具。自动识别低音量部分，支持手动调整和导出。">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        header {
+            background-color: #FF9800;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .logo {
+            color: white;
+            font-size: 1.25rem;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        main {
+            padding: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .editor-container {
+            background: white;
+            padding: 30px 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            margin-top: 20px;
+        }
+
+        .drop-zone {
+            border: 2px dashed #FF9800;
+            padding: 40px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        .waveform-wrapper {
+            position: relative;
+            width: 100%;
+            height: 180px;
+            background: #eee;
+            margin: 20px 0;
+            overflow: hidden;
+            border-radius: 4px;
+            cursor: crosshair;
+            touch-action: none;
+        }
+
+        canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .threshold-control {
+            margin: 10px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        button {
+            background-color: #FF9800;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1rem;
+            width: 100%;
+            max-width: 280px;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+        }
+
+        .instruction {
+            background: #FFF3E0;
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 0.85rem;
+            margin-bottom: 15px;
+            text-align: left;
+            line-height: 1.6;
+        }
+
+        #status {
+            margin-top: 15px;
+            font-size: 0.8rem;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <a href="#" class="logo">Utility Hub</a>
+    </header>
+
+    <main>
+        <h1>静音自动剪辑器</h1>
+        <p>自动识别视频或音频中的无声部分并进行修整</p>
+
+        <section class="editor-container">
+            <div id="dropZone" class="drop-zone" onclick="document.getElementById('fileInput').click()">
+                <p>点击或拖放视频/音频文件到此处</p>
+                <input type="file" id="fileInput" accept="video/*,audio/*" style="display:none">
+            </div>
+
+            <div id="editorUI" style="display:none">
+                <div class="instruction">
+                    <strong>操作说明:</strong><br>
+                    • 橙色区域表示“保留的声音部分”。<br>
+                    • <b>在波形图上拖动</b>可以反转该区域的静音/有声状态。<br>
+                    • 如果自动识别不准确，请调整下方滑块并点击“重新解析”。
+                </div>
+
+                <div class="threshold-control">
+                    <label>识别灵敏度 (阈值):</label>
+                    <input type="range" id="thresholdRange" min="0" max="0.2" step="0.005" value="0.02" style="width: 80%;">
+                    <button id="reAnalyzeBtn" style="padding: 8px 15px; font-size: 0.85rem;">重新解析</button>
+                </div>
+
+                <div class="waveform-wrapper" id="waveformWrapper">
+                    <canvas id="waveformCanvas"></canvas>
+                    <canvas id="overlayCanvas"></canvas>
+                </div>
+
+                <div class="controls">
+                    <button id="playBtn">播放 / 停止</button>
+                    <button id="exportBtn">导出处理后的音频 (WAV)</button>
+                </div>
+                <div id="status"></div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const editorUI = document.getElementById('editorUI');
+        const waveformCanvas = document.getElementById('waveformCanvas');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const thresholdRange = document.getElementById('thresholdRange');
+        const reAnalyzeBtn = document.getElementById('reAnalyzeBtn');
+        const playBtn = document.getElementById('playBtn');
+        const exportBtn = document.getElementById('exportBtn');
+        const status = document.getElementById('status');
+
+        let audioCtx, audioBuffer, rawData;
+        let regions = []; 
+        let isPlaying = false;
+        let sourceNode;
+
+        fileInput.addEventListener('change', (e) => { handleFiles(e.target.files); });
+
+        async function handleFiles(files) {
+            if (files.length === 0) return;
+            status.innerText = "正在加载文件...";
+            
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+                const arrayBuffer = await files[0].arrayBuffer();
+                audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                rawData = audioBuffer.getChannelData(0);
+
+                analyzeSilence();
+                drawWaveform();
+                drawOverlay();
+                
+                editorUI.style.display = 'block';
+                dropZone.style.display = 'none';
+                status.innerText = "解析完成";
+            } catch (e) {
+                status.innerText = "加载失败，请尝试较小的文件。";
+            }
+        }
+
+        function analyzeSilence() {
+            const threshold = parseFloat(thresholdRange.value);
+            const step = Math.floor(audioBuffer.sampleRate * 0.1); 
+            regions = [];
+            let isCurrentSound = false;
+            let startIdx = 0;
+
+            for (let i = 0; i < rawData.length; i += 100) {
+                const vol = Math.abs(rawData[i]);
+                if (!isCurrentSound && vol > threshold) {
+                    isCurrentSound = true;
+                    startIdx = i;
+                } else if (isCurrentSound && vol < threshold) {
+                    let check = true;
+                    for(let j=i; j<i+step && j<rawData.length; j+=100){
+                        if(Math.abs(rawData[j]) > threshold) { check = false; break; }
+                    }
+                    if(check){
+                        isCurrentSound = false;
+                        regions.push({start: startIdx / rawData.length, end: i / rawData.length});
+                    }
+                }
+            }
+            if (isCurrentSound) regions.push({start: startIdx / rawData.length, end: 1});
+        }
+
+        function drawWaveform() {
+            const ctx = waveformCanvas.getContext('2d');
+            waveformCanvas.width = waveformCanvas.offsetWidth;
+            waveformCanvas.height = waveformCanvas.offsetHeight;
+            const w = waveformCanvas.width, h = waveformCanvas.height;
+            const step = Math.ceil(rawData.length / w);
+            const amp = h / 2;
+
+            ctx.fillStyle = "#ccc";
+            ctx.beginPath();
+            ctx.moveTo(0, amp);
+            for (let i = 0; i < w; i++) {
+                let min = 1.0, max = -1.0;
+                for (let j = 0; j < step; j++) {
+                    const d = rawData[(i * step) + j];
+                    if (d < min) min = d;
+                    if (d > max) max = d;
+                }
+                ctx.lineTo(i, (1 + min) * amp);
+                ctx.lineTo(i, (1 + max) * amp);
+            }
+            ctx.stroke();
+        }
+
+        function drawOverlay() {
+            const ctx = overlayCanvas.getContext('2d');
+            overlayCanvas.width = overlayCanvas.offsetWidth;
+            overlayCanvas.height = overlayCanvas.offsetHeight;
+            const w = overlayCanvas.width, h = overlayCanvas.height;
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = "rgba(255, 152, 0, 0.3)"; 
+            regions.forEach(r => {
+                ctx.fillRect(r.start * w, 0, (r.end - r.start) * w, h);
+            });
+        }
+
+        let isDragging = false, dragStart = 0;
+        const getX = (e) => (e.offsetX || (e.touches && e.touches[0].pageX - overlayCanvas.getBoundingClientRect().left));
+
+        overlayCanvas.addEventListener('mousedown', (e) => { isDragging = true; dragStart = getX(e) / overlayCanvas.width; });
+        window.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
+            isDragging = false;
+            const rect = overlayCanvas.getBoundingClientRect();
+            const x = (e.pageX || (e.changedTouches && e.changedTouches[0].pageX)) - rect.left;
+            const dragEnd = Math.max(0, Math.min(1, x / overlayCanvas.width));
+            toggleRegion(Math.min(dragStart, dragEnd), Math.max(dragStart, dragEnd));
+        });
+
+        function toggleRegion(start, end) {
+            let affected = false;
+            for (let i = regions.length - 1; i >= 0; i--) {
+                const r = regions[i];
+                if (start < r.end && end > r.start) {
+                    affected = true;
+                    regions.splice(i, 1);
+                    if (r.start < start) regions.push({start: r.start, end: start});
+                    if (r.end > end) regions.push({start: end, end: r.end});
+                }
+            }
+            if (!affected) {
+                regions.push({start, end});
+                regions.sort((a, b) => a.start - b.start);
+            }
+            drawOverlay();
+        }
+
+        reAnalyzeBtn.addEventListener('click', () => { analyzeSilence(); drawOverlay(); });
+
+        playBtn.addEventListener('click', () => {
+            if (isPlaying) {
+                sourceNode.stop();
+                isPlaying = false;
+            } else {
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+                sourceNode = audioCtx.createBufferSource();
+                const pb = audioCtx.createBuffer(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+                for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+                    const d = audioBuffer.getChannelData(ch), nd = pb.getChannelData(ch);
+                    nd.set(d);
+                    const mask = new Float32Array(nd.length).fill(0);
+                    regions.forEach(r => {
+                        for(let i = Math.floor(r.start * nd.length); i < Math.floor(r.end * nd.length); i++) mask[i] = 1;
+                    });
+                    for(let i=0; i<nd.length; i++) if(mask[i] === 0) nd[i] = 0;
+                }
+                sourceNode.buffer = pb;
+                sourceNode.connect(audioCtx.destination);
+                sourceNode.start();
+                isPlaying = true;
+                sourceNode.onended = () => isPlaying = false;
+            }
+        });
+
+        exportBtn.addEventListener('click', async () => {
+            status.innerText = "正在处理并准备下载...";
+            const offlineCtx = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+            const source = offlineCtx.createBufferSource();
+            const rb = audioCtx.createBuffer(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+            for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+                const d = audioBuffer.getChannelData(ch), nd = rb.getChannelData(ch);
+                nd.set(d);
+                regions.forEach((r, idx) => {
+                    const nextStart = idx < regions.length - 1 ? Math.floor(regions[idx+1].start * nd.length) : nd.length;
+                    for(let i = Math.floor(r.end * nd.length); i < nextStart; i++) nd[i] = 0;
+                    if(idx === 0) for(let i=0; i < Math.floor(r.start * nd.length); i++) nd[i] = 0;
+                });
+            }
+            source.buffer = rb;
+            source.connect(offlineCtx.destination);
+            source.start();
+            const rendered = await offlineCtx.startRendering();
+            const wav = bufferToWave(rendered, rendered.length);
+            const url = URL.createObjectURL(wav);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = "output.wav";
+            a.click();
+            status.innerText = "下载已启动";
+        });
+
+        function bufferToWave(abuffer, len) {
+            let n = abuffer.numberOfChannels, l = len * n * 2 + 44, b = new ArrayBuffer(l), v = new DataView(b), pos = 0;
+            const set16 = (d) => { v.setUint16(pos, d, true); pos += 2; };
+            const set32 = (d) => { v.setUint32(pos, d, true); pos += 4; };
+            set32(0x46464952); set32(l - 8); set32(0x45564157); set32(0x20746d66); set32(16); set16(1); set16(n);
+            set32(abuffer.sampleRate); set32(abuffer.sampleRate * 2 * n); set16(n * 2); set16(16); set32(0x61746164); set32(l - pos - 4);
+            for (let i = 0; i < len; i++) {
+                for (let c = 0; c < n; c++) {
+                    let s = Math.max(-1, Math.min(1, abuffer.getChannelData(c)[i]));
+                    set16(s < 0 ? s * 32768 : s * 32767);
+                }
+            }
+            return new Blob([b], {type: "audio/wav"});
+        }
+    </script>
+</body>
+</html>
