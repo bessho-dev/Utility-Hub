@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Diff Checker | Utility Hub</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+
+        header {
+            background-color: #FF9800;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .logo {
+            color: white;
+            font-size: 1.25rem;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        main {
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+        }
+
+        .diff-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 15px;
+        }
+
+        .input-box {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.85rem;
+            resize: vertical;
+            outline: none;
+        }
+
+        textarea:focus {
+            border-color: #FF9800;
+        }
+
+        .controls {
+            text-align: center;
+        }
+
+        button {
+            background-color: #FF9800;
+            color: white;
+            border: none;
+            padding: 12px 40px;
+            border-radius: 30px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #F57C00;
+        }
+
+        #diffOutput {
+            margin-top: 20px;
+            border-top: 2px solid #f5f5f5;
+            padding-top: 20px;
+            white-space: pre-wrap;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+
+        .diff-line {
+            display: flex;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+
+        .added { background-color: #e6ffec; color: #24292e; }
+        .added::before { content: "+ "; color: #22863a; width: 20px; flex-shrink: 0; }
+
+        .removed { background-color: #ffeef0; color: #24292e; }
+        .removed::before { content: "- "; color: #cb2431; width: 20px; flex-shrink: 0; }
+
+        .unchanged { color: #6a737d; }
+        .unchanged::before { content: "  "; width: 20px; flex-shrink: 0; }
+
+        @media (max-width: 768px) {
+            .input-group { flex-direction: column; }
+            textarea { height: 150px; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <a href="#" class="logo">Utility Hub</a>
+    </header>
+
+    <main>
+        <h1>Code Diff Checker</h1>
+
+        <div class="diff-container">
+            <div class="input-group">
+                <div class="input-box">
+                    <label>Original Text</label>
+                    <textarea id="textBefore" placeholder="Paste original code here..."></textarea>
+                </div>
+                <div class="input-box">
+                    <label>Modified Text</label>
+                    <textarea id="textAfter" placeholder="Paste modified code here..."></textarea>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="compareBtn">Find Differences</button>
+            </div>
+
+            <div id="diffOutput"></div>
+        </div>
+    </main>
+
+    <script>
+        const compareBtn = document.getElementById('compareBtn');
+        const diffOutput = document.getElementById('diffOutput');
+
+        compareBtn.addEventListener('click', () => {
+            const before = document.getElementById('textBefore').value.split('\n');
+            const after = document.getElementById('textAfter').value.split('\n');
+            
+            diffOutput.innerHTML = '';
+            
+            const diff = simpleDiff(before, after);
+            
+            if (diff.length === 0 || (before.length === 1 && before[0] === "" && after.length === 1 && after[0] === "")) {
+                diffOutput.innerHTML = '<p style="text-align:center; color:#999;">No differences found.</p>';
+                return;
+            }
+
+            diff.forEach(part => {
+                const div = document.createElement('div');
+                div.className = 'diff-line ' + part.type;
+                div.textContent = part.value;
+                diffOutput.appendChild(div);
+            });
+        });
+
+        function simpleDiff(before, after) {
+            let result = [];
+            let i = 0, j = 0;
+
+            while (i < before.length || j < after.length) {
+                if (i < before.length && j < after.length && before[i] === after[j]) {
+                    result.push({ type: 'unchanged', value: before[i] });
+                    i++;
+                    j++;
+                } else {
+                    let found = false;
+                    for (let k = j; k < after.length; k++) {
+                        if (before[i] === after[k]) {
+                            for (let m = j; m < k; m++) {
+                                result.push({ type: 'added', value: after[m] });
+                            }
+                            j = k;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        if (i < before.length) {
+                            result.push({ type: 'removed', value: before[i] });
+                            i++;
+                        } else if (j < after.length) {
+                            result.push({ type: 'added', value: after[j] });
+                            j++;
+                        }
+                    }
+                }
+            }
+            return result;
+        }
+    </script>
+</body>
+</html>
